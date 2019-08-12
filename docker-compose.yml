@@ -1,0 +1,116 @@
+version: '3.7'
+
+services:
+
+  es01:
+    container_name: es01
+    build:
+      context: elasticsearch/
+      args:
+        ELK_VERSION: $ELK_VERSION
+    restart: always
+    volumes:
+      - ./elasticsearch/config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+      - ./elasticsearch/config/jvm.options:/usr/share/elasticsearch/config/jvm.options:ro
+      - esdata:/usr/share/elasticsearch/data
+    ports:
+      - "127.0.0.1:9200:9200"
+      - "127.0.0.1:9300:9300"
+    environment:
+      - ELASTIC_PASSWORD=$ELASTIC_PASSWORD
+      - bootstrap.memory_lock=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    networks:
+      - statistics
+
+  kibana01:
+    container_name: kibana01
+    build:
+      context: kibana/
+      args:
+        ELK_VERSION: $ELK_VERSION
+    restart: always
+    volumes:
+      - ./kibana/config/:/usr/share/kibana/config:ro
+    ports:
+      - "127.0.0.1:5601:5601"
+    networks:
+      - statistics
+    depends_on:
+      - es01
+
+  cache01:
+    container_name: cache01
+    image: redis
+    restart: always
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks: 
+      - statistics
+
+  app01:
+    container_name: app01
+    build:
+      context: node/
+    restart: always
+    volumes:
+      - ./node/app:/var/www/app
+    ports:
+      - "127.0.0.1:3000:3000"
+    command:
+      sh -c 'npm i && node index.js'
+    depends_on:
+      - es01
+    networks: 
+      - statistics
+
+  cerebro01:
+    container_name: cerebro01
+    image: lmenezes/cerebro
+    restart: always
+    ports:
+      - "127.0.0.1:9000:9000"
+    networks:
+      - statistics
+    depends_on:
+      - es01
+
+  nginx01:
+    container_name: nginx01
+    image: nginx:alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "8080:8080"
+      - "443:443"
+      - "9001:9001"
+      - "8081:8081"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    networks:
+      - statistics
+    command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+
+  certbot01:
+    container_name: certbot01
+    image: certbot/certbot
+    restart: always
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+
+networks:
+
+  statistics:
+    driver: bridge
+
+volumes:
+  esdata:
+    driver: local
